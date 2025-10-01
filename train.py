@@ -95,6 +95,7 @@ def training(dataset, opt, pipe, ga_data_root, ga_id, testing_iterations, saving
 
         
         viewpoint_cam.load2device('cpu')
+        viewpoint_cam.original_image = None
         
 
         with torch.no_grad():
@@ -114,7 +115,7 @@ def training(dataset, opt, pipe, ga_data_root, ga_id, testing_iterations, saving
             # Log and save
             cur_psnr = training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end),
                                        testing_iterations, scene, triplane, render, (pipe, background), deform,
-                                       dataset.load2gpu_on_the_fly)  
+                                       True)  
             if iteration in testing_iterations:
                 if cur_psnr.item() > best_psnr:
                     best_psnr = cur_psnr.item()
@@ -225,7 +226,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                     if iteration == testing_iterations[0]:
                         tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name),
                                                 gt_image[None], global_step=iteration)
-
+                viewpoint.image_original = None
             l1_test = l1_loss(images, gts)
             psnr_test = psnr(images, gts).mean()
             if config['name'] == 'test' or len(config[0]['cameras']) == 0:

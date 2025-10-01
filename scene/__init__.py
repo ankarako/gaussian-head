@@ -247,5 +247,5 @@ class SceneGaussianAvatars:
         return self.test_cameras
     
     def save(self, iteration):
-        point_cloud_path = os.path.join('output', "point_cloud/iteration_{}".format(iteration))
+        point_cloud_path = os.path.join('output', self.id, "point_cloud/iteration_{}".format(iteration))
         self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
