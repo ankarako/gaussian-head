@@ -6,7 +6,7 @@ from random import randint
 from utils.loss_utils import l1_loss, ssim, VGGPerceptualLoss
 from gaussian_renderer import render
 import sys
-from scene import Scene
+from scene import Scene, SceneGaussianAvatars
 from scene.deform_model import DeformModel
 from scene.tri_plane import TriPlaneModel
 from scene.gaussian_model import GaussianModel
@@ -24,13 +24,15 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
-
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, is_debug, novel_view, only_head):
+def training(dataset, opt, pipe, ga_data_root, ga_id, testing_iterations, saving_iterations, is_debug, novel_view, only_head):
     tb_writer = prepare_output_and_logger(dataset, opt, pipe)
     gaussians = GaussianModel(dataset.sh_degree)
-    scene = Scene(dataset, gaussians, is_debug, novel_view, only_head)
-    exp_dims = scene.train_cameras[1.0][0].exp.size()
-    deform = DeformModel(exp_dims[0])
+
+    # scene = Scene(dataset, gaussians, is_debug, novel_view, only_head)
+    scene = SceneGaussianAvatars(ga_data_root, 'transforms_train.json', gaussians, id=ga_id)
+    gaussians.create_from_pcd(scene.pcd, scene.cameras_extent)
+    deform = DeformModel(scene.exp_dims)
+
     deform.train_setting(opt)
     tilted = gaussians.tilted
     tilted.train_setting(opt)
@@ -63,15 +65,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, is_debug
             viewpoint_stack = scene.getTrainCameras().copy()
 
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack) - 1))  # random choose one to train
-        if dataset.load2gpu_on_the_fly:
-            viewpoint_cam.load2device()
+        viewpoint_cam.load2device()
+
         exp = viewpoint_cam.exp  
 
         if iteration < opt.warm_up: 
             d_xyz, d_rotation, d_scaling = 0.0, 0.0, 0.0
         else:
             N = gaussians.get_xyz.shape[0]
-            exp_input = exp.unsqueeze(0).expand(N, -1)
+            exp_input = exp.expand(N, -1)
             d_xyz, d_rotation, d_scaling = deform.step(gaussians.get_xyz.detach(), exp_input)
 
         # Render
@@ -91,8 +93,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, is_debug
 
         iter_end.record()
 
-        if dataset.load2gpu_on_the_fly:
-            viewpoint_cam.load2device('cpu')
+        
+        viewpoint_cam.load2device('cpu')
+        
 
         with torch.no_grad():
             # Progress bar
@@ -154,6 +157,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, is_debug
                 
                 tilted.optimizer.zero_grad()
                 tilted.update_learning_rate(iteration)
+        viewpoint_cam.original_image = None
 
 
 def prepare_output_and_logger(lpargs, opargs, ppargs):
@@ -198,7 +202,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                     viewpoint.load2device()
                 exp = viewpoint.exp
                 xyz = scene.gaussians.get_xyz
-                exp_input = exp.unsqueeze(0).expand(xyz.shape[0], -1)
+                exp_input = exp.expand(xyz.shape[0], -1)
                 d_xyz, d_rotation, d_scaling = deform.step(xyz.detach(), exp_input)
                 image = torch.clamp(renderFunc(viewpoint, scene.gaussians, triplane, *renderArgs, d_xyz, 
                                                d_rotation, d_scaling, iteration)["render"], 0.0, 1.0)
@@ -254,11 +258,13 @@ if __name__ == "__main__":
     parser.add_argument("--is_debug", type=bool, default=False)
     parser.add_argument("--novel_view", type=bool, default=False)
     parser.add_argument("--only_head", type=bool, default=False)
+    parser.add_argument("--ga_data_root", type=str, help="Path to the GaussianAvatars data root directory")
+    parser.add_argument("--ga_id", type=str, help="The GaussianAvatars subject id")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
 
     print("Optimizing " + args.model_path)
     safe_state(args.quiet)
 
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations,
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.ga_data_root, args.ga_id, args.test_iterations, args.save_iterations,
               args.is_debug, args.novel_view, args.only_head)
